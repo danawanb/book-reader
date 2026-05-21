@@ -83,6 +83,39 @@ npm run tauri build
 Produces a native binary in `src-tauri/target/release/` and (on Linux) a
 `.deb` / `.rpm` / `.AppImage` in `src-tauri/target/release/bundle/`.
 
+## Releases (CI)
+
+A GitHub Actions workflow (`.github/workflows/release.yml`) builds Linux
+bundles automatically. Trigger it by either:
+
+```bash
+# 1. Push a version tag → workflow builds & creates a draft release
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+…or run **Actions → release → Run workflow** from the GitHub UI and enter a
+tag name. Bundles (`.AppImage`, `.deb`, `.rpm`) are attached to a draft
+release — review and publish when ready.
+
+### Which bundle for which distro?
+
+The CI runner is Ubuntu 22.04, which means:
+
+| Format       | Ubuntu / Debian | Fedora / openSUSE | Arch / others |
+| ------------ | --------------- | ----------------- | ------------- |
+| `.AppImage`  | ✅ Yes          | ✅ Yes            | ✅ Yes        |
+| `.deb`       | ✅ Yes          | ❌ No             | ❌ No         |
+| `.rpm`       | ❌ No           | ⚠️ Usually        | ❌ No         |
+
+**`.AppImage` is the safest choice across distros** — it's self-contained:
+just `chmod +x` and run.
+
+The `.rpm` produced on Ubuntu links against Ubuntu's `libwebkit2gtk-4.1`,
+which is compatible with Fedora 40+ in most cases but isn't guaranteed
+across all RPM-based distros. For a guaranteed-native RPM, build on a
+Fedora image instead.
+
 ## Configuration
 
 Open **Settings** (gear icon in library) to set your OpenAI API key.
