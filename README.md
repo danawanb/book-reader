@@ -104,17 +104,33 @@ The CI runner is Ubuntu 22.04, which means:
 
 | Format       | Ubuntu / Debian | Fedora / openSUSE | Arch / others |
 | ------------ | --------------- | ----------------- | ------------- |
-| `.AppImage`  | ✅ Yes          | ✅ Yes            | ✅ Yes        |
+| `.AppImage`  | ✅ Usually      | ⚠️ Often broken   | ⚠️ YMMV       |
 | `.deb`       | ✅ Yes          | ❌ No             | ❌ No         |
-| `.rpm`       | ❌ No           | ⚠️ Usually        | ❌ No         |
+| `.rpm`       | ❌ No           | ✅ Yes (tested)   | ⚠️ YMMV       |
 
-**`.AppImage` is the safest choice across distros** — it's self-contained:
-just `chmod +x` and run.
+**Fedora users: install the `.rpm`.** AppImage bundles its own
+`libwebkit2gtk-4.1`, which crashes with `EGL_BAD_PARAMETER` on
+Fedora 40+ (newer kernel + Mesa stack):
 
-The `.rpm` produced on Ubuntu links against Ubuntu's `libwebkit2gtk-4.1`,
-which is compatible with Fedora 40+ in most cases but isn't guaranteed
-across all RPM-based distros. For a guaranteed-native RPM, build on a
-Fedora image instead.
+```
+$ ./Book.Reader_0.1.1_amd64.AppImage
+Could not create default EGL display: EGL_BAD_PARAMETER. Aborting...
+```
+
+Workarounds, in order of preference:
+
+```bash
+# Best: install the .rpm — uses your system's webkit, no bundle conflict
+sudo dnf install Book.Reader-0.1.1-1.x86_64.rpm
+
+# Or run AppImage via XWayland (often works)
+GDK_BACKEND=x11 ./Book.Reader_0.1.1_amd64.AppImage
+
+# Last resort: software rendering (slow)
+LIBGL_ALWAYS_SOFTWARE=1 ./Book.Reader_0.1.1_amd64.AppImage
+```
+
+**Ubuntu / Debian users**: `.deb` or `.AppImage` both work.
 
 ## Configuration
 
