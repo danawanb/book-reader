@@ -47,6 +47,8 @@
   let lastSelection: { text: string; rects: DOMRect[] } | null = null;
   let loading = $state(true);
   let loadProgress = $state(0);
+  let removeMenu = $state<{ id: number; x: number; y: number } | null>(null);
+  let clickStartPos: { x: number; y: number } | null = null;
 
   // Use bundled worker via Vite import
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -238,8 +240,55 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === "Escape" && removeMenu) {
+      removeMenu = null;
+      return;
+    }
     if (e.key === "ArrowRight" || e.key === "ArrowDown") goTo(currentPage + 1);
     if (e.key === "ArrowLeft" || e.key === "ArrowUp") goTo(currentPage - 1);
+  }
+
+  function handlePageMouseDown(e: MouseEvent) {
+    clickStartPos = { x: e.clientX, y: e.clientY };
+  }
+
+  function handlePageMouseUp(e: MouseEvent) {
+    if (!clickStartPos) return;
+    const dx = e.clientX - clickStartPos.x;
+    const dy = e.clientY - clickStartPos.y;
+    const moved = Math.hypot(dx, dy);
+    clickStartPos = null;
+    if (moved > 5) return; // dragging → text selection, not a click
+
+    // Skip if user has active selection
+    if (window.getSelection()?.toString().trim()) return;
+
+    // Find highlight beneath the click via elementsFromPoint (textLayer is
+    // visually on top, so we can't rely on event.target alone)
+    const els = document.elementsFromPoint(e.clientX, e.clientY);
+    for (const el of els) {
+      if (
+        el instanceof HTMLElement &&
+        el.classList.contains("highlight-rect")
+      ) {
+        const id = parseInt(el.dataset.highlightId ?? "0");
+        if (id) {
+          removeMenu = { id, x: e.clientX, y: e.clientY };
+        }
+        return;
+      }
+    }
+    removeMenu = null;
+  }
+
+  async function deleteHighlight(id: number) {
+    try {
+      await invoke("delete_highlight", { id });
+      removeMenu = null;
+      await loadHighlights(currentPage);
+    } catch (e) {
+      console.error("delete_highlight:", e);
+    }
   }
 
   function handleSelection() {
@@ -381,13 +430,19 @@
     </div>
   {/if}
   <div class="canvas-wrap">
-    <div class="page-wrap">
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="page-wrap"
+      onmousedown={handlePageMouseDown}
+      onmouseup={handlePageMouseUp}
+    >
       <canvas bind:this={canvas}></canvas>
       <div class="highlight-layer" bind:this={highlightLayer}>
         {#each highlights as h (h.id)}
           {#each h.rects as r, i (i)}
             <div
               class="highlight-rect"
+              data-highlight-id={h.id}
               style="background: {h.color}; left: {r.x * scale}px; top: {r.y * scale}px; width: {r.w * scale}px; height: {r.h * scale}px;"
               title={h.text ?? ""}
             ></div>
@@ -398,6 +453,17 @@
       <div class="annotationLayer" bind:this={annotationLayerDiv}></div>
     </div>
   </div>
+
+  {#if removeMenu}
+    <div
+      class="remove-menu"
+      style="left: {removeMenu.x}px; top: {removeMenu.y}px;"
+    >
+      <button onclick={() => deleteHighlight(removeMenu!.id)}>
+        🗑 Remove highlight
+      </button>
+    </div>
+  {/if}
 
   <nav class="controls">
     <button class="nav" onclick={() => goTo(currentPage - 1)} disabled={currentPage <= 1}>←</button>
@@ -500,6 +566,35 @@
     border-radius: 2px;
     opacity: 0.55;
     pointer-events: auto;
+    cursor: pointer;
+  }
+  .remove-menu {
+    position: fixed;
+    transform: translate(-50%, calc(-100% - 4px));
+    background: #181825;
+    border: 1px solid #45475a;
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+    padding: 4px;
+    z-index: 1000;
+  }
+  .remove-menu button {
+    background: transparent;
+    border: none;
+    color: #f38ba8;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+    transition: background 0.1s;
+  }
+  .remove-menu button:hover {
+    background: rgba(243, 139, 168, 0.15);
   }
   .textLayer {
     position: absolute;
