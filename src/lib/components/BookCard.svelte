@@ -42,21 +42,20 @@
         <span class="title-placeholder">{book.title}</span>
       </div>
     {/if}
-
-    {#if book.total_pages && book.total_pages > 0}
-      <div class="progress-bar">
-        <div
-          class="progress-fill"
-          style="width: {Math.min(100, (book.current_page / book.total_pages) * 100)}%"
-        ></div>
-      </div>
-    {/if}
   </div>
 
   <div class="info">
     <p class="book-title">{book.title}</p>
     {#if book.author}
       <p class="author">{book.author}</p>
+    {/if}
+    {#if book.total_pages && book.total_pages > 0}
+      <div class="progress-bar" title="Page {book.current_page} of {book.total_pages}">
+        <div
+          class="progress-fill"
+          style:width="{Math.min(100, (book.current_page / book.total_pages) * 100)}%"
+        ></div>
+      </div>
     {/if}
   </div>
 
@@ -126,12 +125,11 @@
     word-break: break-word;
   }
   .progress-bar {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    height: 3px;
-    background: rgba(255, 255, 255, 0.1);
+    height: 4px;
+    background: #313244;
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 6px;
   }
   .progress-fill {
     height: 100%;
