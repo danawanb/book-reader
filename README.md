@@ -2,6 +2,7 @@
 
 
 ![Book-Reader](https://github.com/user-attachments/assets/9a2eaf5b-1447-48d7-8ad9-62c8c9d550f7)
+![Book-Reader](https://github.com/user-attachments/assets/941c2d88-32aa-46ef-afeb-16486750a31a)
 
 A desktop PDF/EPUB reader with built-in AI chat, per-page notes (text + drawing),
 visual highlights, bookmarks, and in-book search.
