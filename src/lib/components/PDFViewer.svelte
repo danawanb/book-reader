@@ -13,6 +13,8 @@
     highlighter = $bindable(null),
     searcher = $bindable(null),
     jumpTo = $bindable(null),
+    outline = $bindable(null),
+    navigateToDest = $bindable(null),
   }: {
     book: Book;
     onTextSelect: (text: string, rect?: DOMRect) => void;
@@ -22,7 +24,15 @@
       | ((query: string) => Promise<{ page: number; snippet: string }[]>)
       | null;
     jumpTo?: ((page: number) => Promise<void>) | null;
+    outline?: OutlineItem[] | null;
+    navigateToDest?: ((dest: unknown) => Promise<void>) | null;
   } = $props();
+
+  interface OutlineItem {
+    title: string;
+    dest: unknown;
+    items: OutlineItem[];
+  }
 
   interface Highlight {
     id: number;
@@ -57,13 +67,43 @@
 
   async function loadPDF() {
     try {
-    const fileUrl = convertFileSrc(book.file_path);
-    pdfDoc = await pdfjsLib.getDocument(fileUrl).promise;
-    totalPages = pdfDoc.numPages;
-    await renderPage(currentPage);
+      const fileUrl = convertFileSrc(book.file_path);
+      pdfDoc = await pdfjsLib.getDocument(fileUrl).promise;
+      totalPages = pdfDoc.numPages;
+      await renderPage(currentPage);
+      // Load outline once doc is ready
+      try {
+        const rawOutline = await pdfDoc.getOutline();
+        outline = rawOutline ? mapOutline(rawOutline) : [];
+      } catch {
+        outline = [];
+      }
     } catch (e) {
       loadError = String(e);
       console.error("PDFViewer error:", e);
+    }
+  }
+
+  function mapOutline(items: any[]): OutlineItem[] {
+    return items.map((it) => ({
+      title: it.title ?? "",
+      dest: it.dest ?? it.url ?? null,
+      items: it.items ? mapOutline(it.items) : [],
+    }));
+  }
+
+  async function navigateToPdfDest(dest: unknown) {
+    if (!pdfDoc || dest == null) return;
+    try {
+      let explicit: any = dest;
+      if (typeof dest === "string") {
+        explicit = await pdfDoc.getDestination(dest);
+      }
+      if (!Array.isArray(explicit)) return;
+      const pageIdx = await pdfDoc.getPageIndex(explicit[0]);
+      await goTo(pageIdx + 1);
+    } catch (e) {
+      console.warn("navigateToPdfDest failed:", e);
     }
   }
 
@@ -259,6 +299,7 @@
     highlighter = addHighlightFromSelection;
     searcher = searchPdf;
     jumpTo = goTo;
+    navigateToDest = navigateToPdfDest;
   });
 
   async function searchPdf(query: string): Promise<{ page: number; snippet: string }[]> {

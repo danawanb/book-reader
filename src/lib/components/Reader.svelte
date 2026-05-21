@@ -7,6 +7,7 @@
   import NotesPanel from "./NotesPanel.svelte";
   import SelectionMenu from "./SelectionMenu.svelte";
   import SearchPanel from "./SearchPanel.svelte";
+  import OutlinePanel from "./OutlinePanel.svelte";
   import type { Book } from "../stores/books";
 
   let { book, onBack }: {
@@ -14,7 +15,13 @@
     onBack: () => void;
   } = $props();
 
-  type Tab = "chat" | "bookmarks" | "notes" | "search";
+  type Tab = "chat" | "bookmarks" | "notes" | "search" | "contents";
+
+  interface OutlineItem {
+    title: string;
+    dest: unknown;
+    items: OutlineItem[];
+  }
 
   let activeTab = $state<Tab | null>(null);
   let selectedText = $state("");
@@ -29,6 +36,8 @@
     ((q: string) => Promise<{ page: number; snippet: string }[]>) | null
   >(null);
   let viewerJumpTo = $state<((page: number) => Promise<void>) | null>(null);
+  let viewerOutline = $state<OutlineItem[] | null>(null);
+  let viewerNavigateToDest = $state<((dest: unknown) => Promise<void>) | null>(null);
 
   const SIDEBAR_KEY = "sidebar_width";
   let sidebarWidth = $state(loadSidebarWidth());
@@ -152,6 +161,11 @@
     </div>
     <div class="tabs">
       <button
+        class:active={activeTab === "contents"}
+        onclick={() => toggleTab("contents")}
+        title="Table of contents"
+      >☰ Contents</button>
+      <button
         class:active={activeTab === "search"}
         onclick={() => toggleTab("search")}
         title="Search (Ctrl+F)"
@@ -186,6 +200,8 @@
           bind:highlighter={pdfHighlighter}
           bind:searcher={viewerSearcher}
           bind:jumpTo={viewerJumpTo}
+          bind:outline={viewerOutline}
+          bind:navigateToDest={viewerNavigateToDest}
         />
       {:else}
         <EPUBViewer
@@ -194,6 +210,8 @@
           onPageChange={handlePageChange}
           bind:searcher={viewerSearcher}
           bind:jumpTo={viewerJumpTo}
+          bind:outline={viewerOutline}
+          bind:navigateToDest={viewerNavigateToDest}
         />
       {/if}
     </div>
@@ -213,6 +231,8 @@
           <NotesPanel {book} {currentPage} {appendRequest} />
         {:else if activeTab === "search"}
           <SearchPanel searcher={viewerSearcher} onJump={handleJump} />
+        {:else if activeTab === "contents"}
+          <OutlinePanel outline={viewerOutline} navigateToDest={viewerNavigateToDest} />
         {:else}
           <BookmarkList {book} {currentPage} onJump={handleJump} />
         {/if}

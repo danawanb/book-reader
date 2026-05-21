@@ -12,6 +12,8 @@
     onPageChange,
     searcher = $bindable(null),
     jumpTo = $bindable(null),
+    outline = $bindable(null),
+    navigateToDest = $bindable(null),
   }: {
     book: Book;
     onTextSelect: (text: string, rect?: DOMRect) => void;
@@ -20,7 +22,15 @@
       | ((query: string) => Promise<{ page: number; snippet: string }[]>)
       | null;
     jumpTo?: ((page: number) => Promise<void>) | null;
+    outline?: OutlineItem[] | null;
+    navigateToDest?: ((dest: unknown) => Promise<void>) | null;
   } = $props();
+
+  interface OutlineItem {
+    title: string;
+    dest: unknown;
+    items: OutlineItem[];
+  }
 
   let viewerEl: HTMLDivElement;
   let rendition: any = null;
@@ -90,7 +100,7 @@
       await rendition.display();
     }
 
-    // Expose searcher + jumpTo after epub ready
+    // Expose searcher + jumpTo + outline + navigate after epub ready
     searcher = searchEpub;
     jumpTo = async (page: number) => {
       if (!ebookDoc || totalPages === 0) return;
@@ -98,6 +108,22 @@
       const cfi = ebookDoc.locations.cfiFromPercentage(Math.max(0, Math.min(1, pct)));
       if (cfi) await rendition.display(cfi);
     };
+    navigateToDest = async (dest: unknown) => {
+      if (!rendition || typeof dest !== "string") return;
+      try {
+        await rendition.display(dest);
+      } catch (e) {
+        console.warn("EPUB navigate failed:", e);
+      }
+    };
+
+    // Load TOC
+    try {
+      const toc = (ebookDoc.navigation as any)?.toc ?? [];
+      outline = mapEpubToc(toc);
+    } catch {
+      outline = [];
+    }
 
     rendition.on("relocated", (location: any) => {
       const pct = ebookDoc.locations.percentageFromCfi(location.start.cfi);
@@ -146,6 +172,14 @@
 
   async function next() {
     await rendition?.next();
+  }
+
+  function mapEpubToc(items: any[]): OutlineItem[] {
+    return items.map((it) => ({
+      title: it.label?.trim() ?? "",
+      dest: it.href ?? null,
+      items: it.subitems ? mapEpubToc(it.subitems) : [],
+    }));
   }
 
   async function searchEpub(query: string): Promise<{ page: number; snippet: string }[]> {
