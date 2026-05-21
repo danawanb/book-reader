@@ -30,9 +30,16 @@
     <label>
       Model
       <select bind:value={model}>
-        <option value="gpt-4o-mini">gpt-4o-mini (Fast & Cheap)</option>
-        <option value="gpt-4o">gpt-4o</option>
-        <option value="gpt-4-turbo">gpt-4-turbo</option>
+        <optgroup label="GPT-5">
+          <option value="gpt-5">gpt-5</option>
+          <option value="gpt-5-mini">gpt-5-mini (Fast & Cheap)</option>
+          <option value="gpt-5-nano">gpt-5-nano (Cheapest)</option>
+        </optgroup>
+        <optgroup label="GPT-4">
+          <option value="gpt-4o">gpt-4o</option>
+          <option value="gpt-4o-mini">gpt-4o-mini</option>
+          <option value="gpt-4-turbo">gpt-4-turbo</option>
+        </optgroup>
       </select>
     </label>
 
