@@ -45,6 +45,8 @@
   let highlights = $state<Highlight[]>([]);
   let highlightLayer: HTMLDivElement;
   let lastSelection: { text: string; rects: DOMRect[] } | null = null;
+  let loading = $state(true);
+  let loadProgress = $state(0);
 
   // Use bundled worker via Vite import
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
@@ -66,9 +68,15 @@
   let loadError = $state("");
 
   async function loadPDF() {
+    loading = true;
+    loadProgress = 0;
     try {
       const fileUrl = convertFileSrc(book.file_path);
-      pdfDoc = await pdfjsLib.getDocument(fileUrl).promise;
+      const task = pdfjsLib.getDocument(fileUrl);
+      task.onProgress = ({ loaded, total }: { loaded: number; total: number }) => {
+        if (total > 0) loadProgress = Math.round((loaded / total) * 100);
+      };
+      pdfDoc = await task.promise;
       totalPages = pdfDoc.numPages;
       await renderPage(currentPage);
       // Load outline once doc is ready
@@ -81,6 +89,8 @@
     } catch (e) {
       loadError = String(e);
       console.error("PDFViewer error:", e);
+    } finally {
+      loading = false;
     }
   }
 
@@ -351,6 +361,19 @@
 </script>
 
 <div class="pdf-viewer" bind:this={container}>
+  {#if loading && !loadError}
+    <div class="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-text">
+        Loading PDF{loadProgress > 0 ? `… ${loadProgress}%` : "…"}
+      </div>
+      {#if loadProgress > 0}
+        <div class="progress-track">
+          <div class="progress-fill" style:width="{loadProgress}%"></div>
+        </div>
+      {/if}
+    </div>
+  {/if}
   {#if loadError}
     <div class="load-error">
       <p>Failed to load PDF:</p>
@@ -404,6 +427,7 @@
     height: 100%;
     background: #181825;
     overflow: hidden;
+    position: relative;
   }
   .load-error {
     padding: 16px;
@@ -411,6 +435,45 @@
     font-size: 12px;
   }
   .load-error pre { background: #181825; padding: 8px; border-radius: 4px; font-size: 11px; }
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    background: rgba(24, 24, 37, 0.92);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    backdrop-filter: blur(2px);
+  }
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #313244;
+    border-top-color: #89b4fa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .loading-text {
+    color: #cdd6f4;
+    font-size: 13px;
+  }
+  .progress-track {
+    width: 200px;
+    height: 4px;
+    background: #313244;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: #89b4fa;
+    transition: width 0.15s ease;
+  }
   .canvas-wrap {
     flex: 1;
     overflow: auto;

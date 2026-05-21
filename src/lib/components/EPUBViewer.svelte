@@ -39,12 +39,16 @@
   let totalPages = $state(0);
   let coverExtracted = false;
   let saveProgress: ReturnType<typeof setTimeout> | null = null;
+  let loading = $state(true);
+  let loadStage = $state("Opening book…");
 
   async function getAppDataDir(): Promise<string> {
     return appDataDir();
   }
 
   async function loadEpub() {
+    loading = true;
+    loadStage = "Opening book…";
     const fileUrl = convertFileSrc(book.file_path);
     ebookDoc = ePub(fileUrl);
     rendition = ebookDoc.renderTo(viewerEl, {
@@ -54,6 +58,7 @@
     });
 
     await ebookDoc.ready;
+    loadStage = "Parsing structure…";
 
     // Register & apply dark theme inside the iframe
     rendition.themes.register("dark", {
@@ -86,10 +91,12 @@
     }
 
     // Generate locations for pagination
+    loadStage = "Generating page index…";
     await ebookDoc.locations.generate(1000);
     totalPages = ebookDoc.locations.total || 0;
 
     // Display from saved position
+    loadStage = "Rendering…";
     const startCfi = currentPage > 1
       ? ebookDoc.locations.cfiFromPercentage((currentPage - 1) / Math.max(1, totalPages - 1))
       : undefined;
@@ -99,6 +106,7 @@
     } else {
       await rendition.display();
     }
+    loading = false;
 
     // Expose searcher + jumpTo + outline + navigate after epub ready
     searcher = searchEpub;
@@ -246,6 +254,12 @@
 </script>
 
 <div class="epub-viewer">
+  {#if loading}
+    <div class="loading-overlay">
+      <div class="spinner"></div>
+      <div class="loading-text">{loadStage}</div>
+    </div>
+  {/if}
   <div class="viewer-body" bind:this={viewerEl}></div>
 
   <nav class="controls">
@@ -267,10 +281,38 @@
     flex-direction: column;
     height: 100%;
     background: #1e1e2e;
+    position: relative;
   }
   .viewer-body {
     flex: 1;
     overflow: hidden;
+  }
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    background: rgba(30, 30, 46, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    backdrop-filter: blur(2px);
+  }
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #313244;
+    border-top-color: #89b4fa;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .loading-text {
+    color: #cdd6f4;
+    font-size: 13px;
   }
   .controls {
     display: flex;
