@@ -14,6 +14,20 @@
 
   let adding = $state(false);
   let error = $state("");
+  let searchQuery = $state("");
+
+  const filteredBooks = $derived.by(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return $books;
+    return $books.filter((b) => {
+      const filename = b.file_path.split("/").pop() ?? "";
+      return (
+        b.title.toLowerCase().includes(q) ||
+        (b.author?.toLowerCase().includes(q) ?? false) ||
+        filename.toLowerCase().includes(q)
+      );
+    });
+  });
 
   async function handleAddBook() {
     error = "";
@@ -63,6 +77,18 @@
 <div class="library">
   <header>
     <h1>Book Reader</h1>
+    <div class="search-wrap">
+      <input
+        type="search"
+        class="search-input"
+        placeholder="Search title, author, or filename…"
+        bind:value={searchQuery}
+        disabled={$books.length === 0}
+      />
+      {#if searchQuery}
+        <button class="search-clear" onclick={() => (searchQuery = "")} title="Clear">×</button>
+      {/if}
+    </div>
     <div class="header-actions">
       <button class="btn-icon" onclick={onSettings} title="Settings">⚙</button>
       <button class="btn-add" onclick={handleAddBook} disabled={adding}>
@@ -81,9 +107,14 @@
       <p>No books yet.</p>
       <p class="sub">Click <strong>+ Add Book</strong> to get started.</p>
     </div>
+  {:else if filteredBooks.length === 0}
+    <div class="empty">
+      <div class="empty-icon">🔍</div>
+      <p>No matches for <em>"{searchQuery}"</em>.</p>
+    </div>
   {:else}
     <div class="grid">
-      {#each $books as book (book.id)}
+      {#each filteredBooks as book (book.id)}
         <BookCard {book} onOpen={onOpen} />
       {/each}
     </div>
@@ -111,11 +142,58 @@
     font-size: 22px;
     font-weight: 700;
     color: #cdd6f4;
+    flex-shrink: 0;
+  }
+  .search-wrap {
+    flex: 1;
+    max-width: 420px;
+    position: relative;
+  }
+  .search-input {
+    width: 100%;
+    background: #313244;
+    border: 1px solid #45475a;
+    color: #cdd6f4;
+    border-radius: 8px;
+    padding: 8px 32px 8px 12px;
+    font-size: 13px;
+    outline: none;
+    font-family: inherit;
+  }
+  .search-input:focus {
+    border-color: #89b4fa;
+  }
+  .search-input:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .search-clear {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    color: #6c7086;
+    font-size: 18px;
+    line-height: 1;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .search-clear:hover {
+    background: #45475a;
+    color: #cdd6f4;
   }
   .header-actions {
     display: flex;
     gap: 10px;
     align-items: center;
+    flex-shrink: 0;
   }
   .btn-add {
     background: #89b4fa;
