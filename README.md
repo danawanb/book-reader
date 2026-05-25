@@ -63,6 +63,7 @@ Built with Tauri 2 + Svelte 5 + TypeScript.
 - **Rust** stable (`rustup`)
 - **Tauri CLI**: `cargo install tauri-cli --version "^2"`
 - **Linux**: `webkit2gtk-4.1` system package
+- **Windows**: NSIS + WiX Toolset (only needed if you want `.exe` / `.msi` installers)
 
 ## Development
 
@@ -85,8 +86,8 @@ Produces a native binary in `src-tauri/target/release/` and (on Linux) a
 
 ## Releases (CI)
 
-A GitHub Actions workflow (`.github/workflows/release.yml`) builds Linux
-bundles automatically. Trigger it by either:
+A GitHub Actions workflow (`.github/workflows/release.yml`) builds desktop
+bundles automatically (Linux + Windows). Trigger it by either:
 
 ```bash
 # 1. Push a version tag → workflow builds & creates a draft release
@@ -95,8 +96,9 @@ git push origin v0.1.0
 ```
 
 …or run **Actions → release → Run workflow** from the GitHub UI and enter a
-tag name. Bundles (`.AppImage`, `.deb`, `.rpm`) are attached to a draft
-release — review and publish when ready.
+tag name. Bundles are attached to a draft release — review and publish when ready.
+
+Windows note: CI produces `.msi` and `.exe` (NSIS) installers, but they haven't been tested yet.
 
 ### Which bundle for which distro?
 
