@@ -69,8 +69,54 @@ jobs:
           tagName: ${{ github.event.inputs.tag || github.ref_name }}
           releaseName: "Book Reader ${{ github.event.inputs.tag || github.ref_name }}"
           releaseBody: |
-            Linux bundles built by GitHub Actions.
+            Desktop bundles built by GitHub Actions.
 
-            Artifacts: `.AppImage`, `.deb`, `.rpm`
+            Artifacts:
+            - Linux: `.AppImage`, `.deb`, `.rpm`
+            - Windows: `.msi`, `.exe` (NSIS)
           releaseDraft: true
           prerelease: false
+
+  build-windows:
+    name: Build Windows bundles
+    runs-on: windows-latest
+    needs: build-linux
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install Windows bundler tools
+        run: choco install nsis wixtoolset -y
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build & upload bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event.inputs.tag || github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: --bundles msi,nsis
