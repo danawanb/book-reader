@@ -1,25 +1,12 @@
-name: release
+name: ci
 
-# Triggers:
-# - Push a tag like `v0.1.0` → builds and attaches Linux + Windows installers to a draft release
-# - Manual run from Actions tab (provide a tag name as input)
 on:
   push:
-    tags:
-      - "v*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag (e.g. v0.1.0)"
-        required: true
-        default: "v0.1.0"
-
-permissions:
-  contents: write
+  pull_request:
 
 jobs:
   build-linux:
-    name: Build Linux bundles
+    name: Build (Linux)
     runs-on: ubuntu-22.04
 
     steps:
@@ -61,26 +48,15 @@ jobs:
       - name: Install npm deps
         run: npm ci
 
-      - name: Build & upload bundles
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseName: "Book Reader ${{ github.event.inputs.tag || github.ref_name }}"
-          releaseBody: |
-            Desktop bundles built by GitHub Actions.
+      - name: Build frontend
+        run: npm run build
 
-            Artifacts:
-            - Linux: `.AppImage`, `.deb`, `.rpm`
-            - Windows: `.msi`, `.exe` (NSIS)
-          releaseDraft: true
-          prerelease: false
+      - name: Build Tauri (no bundles)
+        run: npm run tauri build -- --bundles none
 
   build-windows:
-    name: Build Windows bundles
+    name: Build (Windows)
     runs-on: windows-latest
-    needs: build-linux
 
     steps:
       - uses: actions/checkout@v4
@@ -105,18 +81,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      - name: Install Windows bundler tools
-        run: choco install nsis wixtoolset -y
-
       - name: Install npm deps
         run: npm ci
 
-      - name: Build & upload bundles
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: ${{ github.event.inputs.tag || github.ref_name }}
-          releaseDraft: true
-          prerelease: false
-          args: --bundles msi,nsis
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build Tauri (no bundles)
+        run: npm run tauri build -- --bundles none
