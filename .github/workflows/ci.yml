@@ -51,8 +51,8 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Tauri (no bundles)
-        run: npm run tauri build -- --bundles none
+      - name: Build Tauri binary (no bundles)
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
 
   build-windows:
     name: Build (Windows)
@@ -87,5 +87,5 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Build Tauri (no bundles)
-        run: npm run tauri build -- --bundles none
+      - name: Build Tauri binary (no bundles)
+        run: cargo build --release --manifest-path src-tauri/Cargo.toml
