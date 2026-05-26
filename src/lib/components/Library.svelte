@@ -12,20 +12,56 @@
     onSettings: () => void;
   } = $props();
 
+  type SortKey = "added" | "title" | "author" | "progress";
+  const sortOptions: { key: SortKey; label: string }[] = [
+    { key: "added", label: "Added" },
+    { key: "title", label: "Title" },
+    { key: "author", label: "Author" },
+    { key: "progress", label: "Progress" },
+  ];
+
   let adding = $state(false);
   let error = $state("");
   let searchQuery = $state("");
+  let sortKey = $state<SortKey>("added");
+
+  $effect(() => {
+    const saved = localStorage.getItem("librarySort") as SortKey | null;
+    if (saved && sortOptions.some((o) => o.key === saved)) sortKey = saved;
+  });
+
+  function setSort(key: SortKey) {
+    sortKey = key;
+    localStorage.setItem("librarySort", key);
+  }
 
   const filteredBooks = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase();
-    if (!q) return $books;
-    return $books.filter((b) => {
-      const filename = b.file_path.split("/").pop() ?? "";
-      return (
-        b.title.toLowerCase().includes(q) ||
-        (b.author?.toLowerCase().includes(q) ?? false) ||
-        filename.toLowerCase().includes(q)
-      );
+    let result = q
+      ? $books.filter((b) => {
+          const filename = b.file_path.split("/").pop() ?? "";
+          return (
+            b.title.toLowerCase().includes(q) ||
+            (b.author?.toLowerCase().includes(q) ?? false) ||
+            filename.toLowerCase().includes(q)
+          );
+        })
+      : $books.slice();
+
+    return result.slice().sort((a, b) => {
+      switch (sortKey) {
+        case "title":
+          return a.title.localeCompare(b.title);
+        case "author":
+          return (a.author ?? "").localeCompare(b.author ?? "");
+        case "progress": {
+          const pa = a.total_pages ? a.current_page / a.total_pages : 0;
+          const pb = b.total_pages ? b.current_page / b.total_pages : 0;
+          return pb - pa;
+        }
+        default:
+          return 0;
+      }
     });
   });
 
@@ -77,6 +113,15 @@
 <div class="library">
   <header>
     <h1>Book Reader</h1>
+    <div class="sort-bar">
+      {#each sortOptions as opt}
+        <button
+          class="sort-btn"
+          class:active={sortKey === opt.key}
+          onclick={() => setSort(opt.key)}
+        >{opt.label}</button>
+      {/each}
+    </div>
     <div class="search-wrap">
       <input
         type="search"
@@ -143,6 +188,35 @@
     font-weight: 700;
     color: #cdd6f4;
     flex-shrink: 0;
+  }
+  .sort-bar {
+    display: flex;
+    gap: 2px;
+    background: #181825;
+    border: 1px solid #313244;
+    border-radius: 8px;
+    padding: 3px;
+    flex-shrink: 0;
+  }
+  .sort-btn {
+    background: transparent;
+    border: none;
+    color: #6c7086;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s, color 0.1s;
+    font-family: inherit;
+  }
+  .sort-btn:hover:not(.active) {
+    background: #313244;
+    color: #cdd6f4;
+  }
+  .sort-btn.active {
+    background: #45475a;
+    color: #cdd6f4;
   }
   .search-wrap {
     flex: 1;
