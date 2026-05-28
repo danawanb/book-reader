@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
 
-  let { x, y, onAsk, onNote, onCopy, onClose, onHighlight }: {
+  let { x, y, onAsk, onNote, onCopy, onClose, onHighlight, onDefine }: {
     x: number;
     y: number;
     onAsk: () => void;
@@ -9,6 +9,7 @@
     onCopy: () => void;
     onClose: () => void;
     onHighlight?: (color: string) => void;
+    onDefine?: () => void;
   } = $props();
 
   const HIGHLIGHT_COLORS = ["#f9e2af", "#a6e3a1", "#89b4fa", "#f38ba8"];
@@ -46,6 +47,11 @@
   <button onclick={onAsk} title="Ask AI">
     <span class="icon">💬</span><span>Ask AI</span>
   </button>
+  {#if onDefine}
+    <button onclick={onDefine} title="Define word">
+      <span class="icon">📖</span><span>Define</span>
+    </button>
+  {/if}
   {#if onHighlight}
     <button onclick={() => (showColors = !showColors)} title="Highlight" class="hl-toggle">
       <span class="icon">🖍</span><span>Highlight</span>

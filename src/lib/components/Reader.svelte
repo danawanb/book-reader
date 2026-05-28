@@ -8,6 +8,7 @@
   import SelectionMenu from "./SelectionMenu.svelte";
   import SearchPanel from "./SearchPanel.svelte";
   import OutlinePanel from "./OutlinePanel.svelte";
+  import DictionaryPopup from "./DictionaryPopup.svelte";
   import type { Book } from "../stores/books";
 
   let { book, onBack }: {
@@ -30,6 +31,7 @@
   let viewerError = $state("");
 
   let menu = $state<{ text: string; x: number; y: number } | null>(null);
+  let dictPopup = $state<{ word: string; x: number; y: number } | null>(null);
   let appendRequest = $state<{ text: string; ts: number } | null>(null);
   let pdfHighlighter = $state<((color: string) => Promise<void>) | null>(null);
   let viewerSearcher = $state<
@@ -130,6 +132,16 @@
     closeMenu();
   }
 
+  function isSingleWord(text: string): boolean {
+    return /^[a-zA-Z][a-zA-Z'-]*$/.test(text.trim());
+  }
+
+  function defineWord() {
+    if (!menu) return;
+    dictPopup = { word: menu.text.trim(), x: menu.x, y: menu.y };
+    closeMenu();
+  }
+
   async function handleJump(page: number) {
     if (viewerJumpTo) await viewerJumpTo(page);
   }
@@ -142,6 +154,7 @@
     }
     if (e.key === "Escape") {
       if (menu) closeMenu();
+      else if (dictPopup) dictPopup = null;
       else if (activeTab !== null) activeTab = null;
     }
   }
@@ -250,6 +263,16 @@
     onCopy={copyText}
     onClose={closeMenu}
     onHighlight={book.file_type === "pdf" ? highlightSelection : undefined}
+    onDefine={isSingleWord(menu.text) ? defineWord : undefined}
+  />
+{/if}
+
+{#if dictPopup}
+  <DictionaryPopup
+    word={dictPopup.word}
+    x={dictPopup.x}
+    y={dictPopup.y}
+    onClose={() => (dictPopup = null)}
   />
 {/if}
 
