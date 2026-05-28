@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, tick } from "svelte";
   import * as pdfjsLib from "pdfjs-dist";
   import { invoke, convertFileSrc } from "@tauri-apps/api/core";
   import { appDataDir } from "@tauri-apps/api/path";
@@ -42,15 +42,38 @@
     rects: { x: number; y: number; w: number; h: number }[];
   }
 
+  type ViewMode = "paged" | "scroll";
+
+  interface PageEntry {
+    pageNum: number;
+    cssWidth: number;
+    cssHeight: number;
+    rendered: boolean;
+    rendering: boolean;
+    canvasEl: HTMLCanvasElement | null;
+    textLayerEl: HTMLDivElement | null;
+    annotationLayerEl: HTMLDivElement | null;
+    highlightLayerEl: HTMLDivElement | null;
+    highlights: Highlight[];
+  }
+
+  // Paged-mode state (existing)
   let highlights = $state<Highlight[]>([]);
   let highlightLayer: HTMLDivElement;
-  let lastSelection: { text: string; rects: DOMRect[] } | null = null;
+  let lastSelection: { text: string; rects: DOMRect[]; pageNum: number } | null = null;
   let loading = $state(true);
   let loadProgress = $state(0);
   let removeMenu = $state<{ id: number; x: number; y: number } | null>(null);
   let clickStartPos: { x: number; y: number } | null = null;
 
-  // Use bundled worker via Vite import
+  // Scroll-mode state
+  const MAX_RENDERED = 10;
+  let viewMode = $state<ViewMode>(loadViewMode());
+  let pageList = $state<PageEntry[]>([]);
+  let scrollContainer: HTMLDivElement | null = $state(null);
+  let scrollObserver: IntersectionObserver | null = null;
+  let renderOrder: number[] = []; // LRU: oldest at index 0, newest at end
+
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",
     import.meta.url
@@ -69,6 +92,29 @@
   let saveProgress: ReturnType<typeof setTimeout> | null = null;
   let loadError = $state("");
 
+  function loadViewMode(): ViewMode {
+    try {
+      const v = localStorage.getItem("pdf_view_mode");
+      if (v === "scroll" || v === "paged") return v;
+    } catch {}
+    return "paged";
+  }
+
+  async function setViewMode(mode: ViewMode) {
+    if (viewMode === mode) return;
+    viewMode = mode;
+    try {
+      localStorage.setItem("pdf_view_mode", mode);
+    } catch {}
+    if (mode === "scroll") {
+      await setupScrollMode();
+    } else {
+      teardownScrollMode();
+      await tick();
+      await renderPage(currentPage);
+    }
+  }
+
   async function loadPDF() {
     loading = true;
     loadProgress = 0;
@@ -80,8 +126,11 @@
       };
       pdfDoc = await task.promise;
       totalPages = pdfDoc.numPages;
-      await renderPage(currentPage);
-      // Load outline once doc is ready
+      if (viewMode === "scroll") {
+        await setupScrollMode();
+      } else {
+        await renderPage(currentPage);
+      }
       try {
         const rawOutline = await pdfDoc.getOutline();
         outline = rawOutline ? mapOutline(rawOutline) : [];
@@ -119,54 +168,79 @@
     }
   }
 
+  // Shared per-page render logic. Renders into provided target elements
+  // and returns the CSS-size dimensions actually used.
+  async function renderPageInto(
+    num: number,
+    target: {
+      canvas: HTMLCanvasElement;
+      textLayer: HTMLDivElement;
+      annotationLayer: HTMLDivElement;
+    },
+  ): Promise<{ cssWidth: number; cssHeight: number }> {
+    if (!pdfDoc) return { cssWidth: 0, cssHeight: 0 };
+    const page = await pdfDoc.getPage(num);
+    // Cap DPR at 1.5: in HiDPI displays canvas memory scales DPR². Capping
+    // here saves ~44% canvas RAM with negligible visual difference at typical
+    // reading zoom.
+    const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+    const cssViewport = page.getViewport({ scale });
+    const renderViewport = page.getViewport({ scale: scale * dpr });
+    const ctx = target.canvas.getContext("2d")!;
+
+    target.canvas.width = Math.floor(renderViewport.width);
+    target.canvas.height = Math.floor(renderViewport.height);
+    target.canvas.style.width = `${Math.floor(cssViewport.width)}px`;
+    target.canvas.style.height = `${Math.floor(cssViewport.height)}px`;
+
+    const cssW = `${Math.floor(cssViewport.width)}px`;
+    const cssH = `${Math.floor(cssViewport.height)}px`;
+    target.textLayer.style.width = cssW;
+    target.textLayer.style.height = cssH;
+    target.textLayer.innerHTML = "";
+    target.textLayer.style.setProperty("--scale-factor", String(cssViewport.scale));
+    target.annotationLayer.style.width = cssW;
+    target.annotationLayer.style.height = cssH;
+    target.annotationLayer.innerHTML = "";
+
+    await page.render({
+      canvasContext: ctx,
+      viewport: renderViewport,
+      canvas: target.canvas,
+    }).promise;
+
+    const textContent = await page.getTextContent();
+    const textLayer = new pdfjsLib.TextLayer({
+      textContentSource: textContent,
+      container: target.textLayer,
+      viewport: cssViewport,
+    });
+    await textLayer.render();
+
+    await renderLinkAnnotations(page, cssViewport, target.annotationLayer);
+
+    if (!coverSaved && num === 1) {
+      coverSaved = true;
+      const dataUrl = target.canvas.toDataURL("image/png");
+      const appDataDir = await getAppDataDir();
+      invoke("save_pdf_cover", { bookId: book.id, dataUrl, appDataDir }).catch(() => {});
+    }
+
+    return {
+      cssWidth: Math.floor(cssViewport.width),
+      cssHeight: Math.floor(cssViewport.height),
+    };
+  }
+
   async function renderPage(num: number) {
     if (!pdfDoc || rendering) return;
     rendering = true;
     try {
-      const page = await pdfDoc.getPage(num);
-      const dpr = window.devicePixelRatio || 1;
-      // CSS-size viewport (layout) vs render viewport (pixel buffer)
-      const cssViewport = page.getViewport({ scale });
-      const renderViewport = page.getViewport({ scale: scale * dpr });
-      const ctx = canvas.getContext("2d")!;
-
-      canvas.width = Math.floor(renderViewport.width);
-      canvas.height = Math.floor(renderViewport.height);
-      canvas.style.width = `${Math.floor(cssViewport.width)}px`;
-      canvas.style.height = `${Math.floor(cssViewport.height)}px`;
-
-      // Match overlay layers to CSS size of canvas
-      const cssW = `${Math.floor(cssViewport.width)}px`;
-      const cssH = `${Math.floor(cssViewport.height)}px`;
-      textLayerDiv.style.width = cssW;
-      textLayerDiv.style.height = cssH;
-      textLayerDiv.innerHTML = "";
-      textLayerDiv.style.setProperty("--scale-factor", String(cssViewport.scale));
-      annotationLayerDiv.style.width = cssW;
-      annotationLayerDiv.style.height = cssH;
-      annotationLayerDiv.innerHTML = "";
-
-      await page.render({ canvasContext: ctx, viewport: renderViewport, canvas }).promise;
-
-      // Render text layer for selection/copy (using CSS-size viewport)
-      const textContent = await page.getTextContent();
-      const textLayer = new pdfjsLib.TextLayer({
-        textContentSource: textContent,
-        container: textLayerDiv,
-        viewport: cssViewport,
+      await renderPageInto(num, {
+        canvas,
+        textLayer: textLayerDiv,
+        annotationLayer: annotationLayerDiv,
       });
-      await textLayer.render();
-
-      // Render clickable link annotations
-      await renderLinkAnnotations(page, cssViewport);
-
-      if (!coverSaved && num === 1) {
-        coverSaved = true;
-        const dataUrl = canvas.toDataURL("image/png");
-        const appDataDir = await getAppDataDir();
-        await invoke("save_pdf_cover", { bookId: book.id, dataUrl, appDataDir }).catch(() => {});
-      }
-
       onPageChange?.(num, totalPages);
       debounceSaveProgress(num);
       loadHighlights(num);
@@ -175,12 +249,61 @@
     }
   }
 
-  async function renderLinkAnnotations(page: any, viewport: any) {
+  async function renderScrollPage(num: number) {
+    const entry = pageList[num - 1];
+    if (!entry || entry.rendered || entry.rendering) return;
+    if (!entry.canvasEl || !entry.textLayerEl || !entry.annotationLayerEl) return;
+    entry.rendering = true;
+    try {
+      const dims = await renderPageInto(num, {
+        canvas: entry.canvasEl,
+        textLayer: entry.textLayerEl,
+        annotationLayer: entry.annotationLayerEl,
+      });
+      entry.cssWidth = dims.cssWidth;
+      entry.cssHeight = dims.cssHeight;
+      entry.rendered = true;
+      trackRender(num);
+      await loadHighlightsForPage(num);
+    } catch (e) {
+      console.error(`renderScrollPage(${num}):`, e);
+    } finally {
+      entry.rendering = false;
+    }
+  }
+
+  function trackRender(num: number) {
+    const idx = renderOrder.indexOf(num);
+    if (idx !== -1) renderOrder.splice(idx, 1);
+    renderOrder.push(num);
+    while (renderOrder.length > MAX_RENDERED) {
+      const oldest = renderOrder.shift()!;
+      evictPage(oldest);
+    }
+  }
+
+  function evictPage(num: number) {
+    const entry = pageList[num - 1];
+    if (!entry || !entry.rendered) return;
+    if (entry.canvasEl) {
+      // width=0 frees the pixel buffer; CSS style.width tetap, layout aman
+      entry.canvasEl.width = 0;
+      entry.canvasEl.height = 0;
+    }
+    if (entry.textLayerEl) entry.textLayerEl.innerHTML = "";
+    if (entry.annotationLayerEl) entry.annotationLayerEl.innerHTML = "";
+    entry.rendered = false;
+  }
+
+  async function renderLinkAnnotations(
+    page: any,
+    viewport: any,
+    target: HTMLDivElement,
+  ) {
     const annotations = await page.getAnnotations();
     for (const ann of annotations) {
       if (ann.subtype !== "Link") continue;
 
-      // Convert PDF rect [x1,y1,x2,y2] (origin bottom-left) to viewport rect
       const rect = pdfjsLib.Util.normalizeRect(
         viewport.convertToViewportRectangle(ann.rect)
       );
@@ -217,7 +340,7 @@
       } else {
         continue;
       }
-      annotationLayerDiv.appendChild(el);
+      target.appendChild(el);
     }
   }
 
@@ -232,11 +355,95 @@
     }, 800);
   }
 
+  async function setupScrollMode() {
+    if (!pdfDoc) return;
+    const firstPage = await pdfDoc.getPage(1);
+    const v = firstPage.getViewport({ scale });
+    const estW = Math.floor(v.width);
+    const estH = Math.floor(v.height);
+
+    pageList = Array.from({ length: totalPages }, (_, i) => ({
+      pageNum: i + 1,
+      cssWidth: estW,
+      cssHeight: estH,
+      rendered: false,
+      rendering: false,
+      canvasEl: null,
+      textLayerEl: null,
+      annotationLayerEl: null,
+      highlightLayerEl: null,
+      highlights: [],
+    }));
+
+    await tick();
+    requestAnimationFrame(() => {
+      setupScrollObserver();
+      scrollToPage(currentPage, false);
+    });
+  }
+
+  function teardownScrollMode() {
+    if (scrollObserver) {
+      scrollObserver.disconnect();
+      scrollObserver = null;
+    }
+    pageList = [];
+    renderOrder = [];
+  }
+
+  function setupScrollObserver() {
+    if (!scrollContainer) return;
+    if (scrollObserver) scrollObserver.disconnect();
+    scrollObserver = new IntersectionObserver(
+      (entries) => {
+        let bestNum = 0;
+        let bestRatio = 0;
+        for (const e of entries) {
+          const num = parseInt((e.target as HTMLElement).dataset.page ?? "0");
+          if (!num) continue;
+          const entry = pageList[num - 1];
+          if (!entry) continue;
+          if (e.isIntersecting) {
+            if (!entry.rendered && !entry.rendering) {
+              renderScrollPage(num);
+            } else if (entry.rendered) {
+              trackRender(num);
+            }
+          }
+          if (e.intersectionRatio > bestRatio) {
+            bestRatio = e.intersectionRatio;
+            bestNum = num;
+          }
+        }
+        if (bestNum > 0 && bestRatio > 0.5 && currentPage !== bestNum) {
+          currentPage = bestNum;
+          onPageChange?.(bestNum, totalPages);
+          debounceSaveProgress(bestNum);
+        }
+      },
+      { root: scrollContainer, rootMargin: "800px 0px", threshold: [0, 0.25, 0.5, 0.75, 1] },
+    );
+    const wraps = scrollContainer.querySelectorAll<HTMLElement>("[data-page]");
+    wraps.forEach((el) => scrollObserver!.observe(el));
+  }
+
+  function scrollToPage(num: number, smooth: boolean) {
+    if (!scrollContainer) return;
+    const el = scrollContainer.querySelector<HTMLElement>(`[data-page="${num}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: smooth ? "smooth" : "auto", block: "start" });
+    }
+  }
+
   async function goTo(page: number) {
     if (!pdfDoc) return;
     const clamped = Math.max(1, Math.min(totalPages, page));
     currentPage = clamped;
-    await renderPage(currentPage);
+    if (viewMode === "paged") {
+      await renderPage(currentPage);
+    } else {
+      scrollToPage(clamped, false);
+    }
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -258,13 +465,10 @@
     const dy = e.clientY - clickStartPos.y;
     const moved = Math.hypot(dx, dy);
     clickStartPos = null;
-    if (moved > 5) return; // dragging → text selection, not a click
+    if (moved > 5) return;
 
-    // Skip if user has active selection
     if (window.getSelection()?.toString().trim()) return;
 
-    // Find highlight beneath the click via elementsFromPoint (textLayer is
-    // visually on top, so we can't rely on event.target alone)
     const els = document.elementsFromPoint(e.clientX, e.clientY);
     for (const el of els) {
       if (
@@ -285,10 +489,31 @@
     try {
       await invoke("delete_highlight", { id });
       removeMenu = null;
-      await loadHighlights(currentPage);
+      if (viewMode === "paged") {
+        await loadHighlights(currentPage);
+      } else {
+        // Find which page this highlight was on and refresh it
+        for (const entry of pageList) {
+          if (entry.highlights.some((h) => h.id === id)) {
+            await loadHighlightsForPage(entry.pageNum);
+            break;
+          }
+        }
+      }
     } catch (e) {
       console.error("delete_highlight:", e);
     }
+  }
+
+  function findSelectionPageNum(range: Range): number {
+    if (viewMode === "paged") return currentPage;
+    const startEl =
+      range.startContainer.nodeType === Node.TEXT_NODE
+        ? range.startContainer.parentElement
+        : (range.startContainer as Element);
+    const wrap = startEl?.closest("[data-page]") as HTMLElement | null;
+    if (!wrap) return currentPage;
+    return parseInt(wrap.dataset.page ?? String(currentPage));
   }
 
   function handleSelection() {
@@ -300,12 +525,14 @@
     }
     let rect: DOMRect | undefined;
     let rects: DOMRect[] = [];
+    let pageNum = currentPage;
     try {
       const range = sel!.getRangeAt(0);
       rect = range.getBoundingClientRect();
       rects = Array.from(range.getClientRects());
+      pageNum = findSelectionPageNum(range);
     } catch {}
-    lastSelection = { text, rects };
+    lastSelection = { text, rects, pageNum };
     onTextSelect(text, rect);
   }
 
@@ -327,10 +554,36 @@
     }
   }
 
-  // Save current selection as highlight; rects normalized to scale=1
+  async function loadHighlightsForPage(num: number) {
+    const entry = pageList[num - 1];
+    if (!entry) return;
+    try {
+      const rows = await invoke<
+        { id: number; page: number; color: string; text: string | null; rects: string }[]
+      >("get_highlights", { bookId: book.id, page: num });
+      entry.highlights = rows.map((r) => ({
+        id: r.id,
+        page: r.page,
+        color: r.color,
+        text: r.text,
+        rects: JSON.parse(r.rects),
+      }));
+    } catch (e) {
+      console.error("loadHighlightsForPage:", e);
+      entry.highlights = [];
+    }
+  }
+
   async function addHighlightFromSelection(color: string) {
     if (!lastSelection || lastSelection.rects.length === 0) return;
-    const layerRect = highlightLayer.getBoundingClientRect();
+    const pageNum = lastSelection.pageNum;
+    const layerEl =
+      viewMode === "paged"
+        ? highlightLayer
+        : pageList[pageNum - 1]?.highlightLayerEl;
+    if (!layerEl) return;
+
+    const layerRect = layerEl.getBoundingClientRect();
     const normRects = lastSelection.rects.map((r) => ({
       x: (r.left - layerRect.left) / scale,
       y: (r.top - layerRect.top) / scale,
@@ -340,20 +593,23 @@
     try {
       await invoke<unknown>("add_highlight", {
         bookId: book.id,
-        page: currentPage,
+        page: pageNum,
         text: lastSelection.text,
         color,
         rects: JSON.stringify(normRects),
       });
       window.getSelection()?.removeAllRanges();
       lastSelection = null;
-      await loadHighlights(currentPage);
+      if (viewMode === "paged") {
+        await loadHighlights(pageNum);
+      } else {
+        await loadHighlightsForPage(pageNum);
+      }
     } catch (e) {
       console.error("add_highlight:", e);
     }
   }
 
-  // Expose to parent via bindable props
   $effect(() => {
     highlighter = addHighlightFromSelection;
     searcher = searchPdf;
@@ -395,6 +651,31 @@
     return results;
   }
 
+  async function changeZoom(delta: number) {
+    const newScale = Math.max(0.25, Math.min(4, scale + delta));
+    if (newScale === scale) return;
+    scale = newScale;
+    if (viewMode === "paged") {
+      await renderPage(currentPage);
+    } else {
+      // Reset rendered state for all pages; observer will re-trigger
+      // visible ones. Update placeholder dims based on new scale.
+      const ratio = newScale / (newScale - delta);
+      for (const entry of pageList) {
+        entry.cssWidth = Math.floor(entry.cssWidth * ratio);
+        entry.cssHeight = Math.floor(entry.cssHeight * ratio);
+        entry.rendered = false;
+      }
+      renderOrder = [];
+      // Force re-render of visible pages
+      if (scrollObserver && scrollContainer) {
+        scrollObserver.disconnect();
+        await tick();
+        setupScrollObserver();
+      }
+    }
+  }
+
   onMount(() => {
     loadPDF();
     window.addEventListener("keydown", handleKeyDown);
@@ -404,6 +685,7 @@
   onDestroy(() => {
     window.removeEventListener("keydown", handleKeyDown);
     document.removeEventListener("mouseup", handleSelection);
+    scrollObserver?.disconnect();
     pdfDoc?.destroy();
     if (saveProgress) clearTimeout(saveProgress);
   });
@@ -429,30 +711,69 @@
       <pre>{loadError}</pre>
     </div>
   {/if}
-  <div class="canvas-wrap">
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div
-      class="page-wrap"
-      onmousedown={handlePageMouseDown}
-      onmouseup={handlePageMouseUp}
-    >
-      <canvas bind:this={canvas}></canvas>
-      <div class="highlight-layer" bind:this={highlightLayer}>
-        {#each highlights as h (h.id)}
-          {#each h.rects as r, i (i)}
-            <div
-              class="highlight-rect"
-              data-highlight-id={h.id}
-              style="background: {h.color}; left: {r.x * scale}px; top: {r.y * scale}px; width: {r.w * scale}px; height: {r.h * scale}px;"
-              title={h.text ?? ""}
-            ></div>
+
+  {#if viewMode === "paged"}
+    <div class="canvas-wrap paged">
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div
+        class="page-wrap"
+        data-page={currentPage}
+        onmousedown={handlePageMouseDown}
+        onmouseup={handlePageMouseUp}
+      >
+        <canvas bind:this={canvas}></canvas>
+        <div class="highlight-layer" bind:this={highlightLayer}>
+          {#each highlights as h (h.id)}
+            {#each h.rects as r, i (i)}
+              <div
+                class="highlight-rect"
+                data-highlight-id={h.id}
+                style="background: {h.color}; left: {r.x * scale}px; top: {r.y * scale}px; width: {r.w * scale}px; height: {r.h * scale}px;"
+                title={h.text ?? ""}
+              ></div>
+            {/each}
           {/each}
+        </div>
+        <div class="textLayer" bind:this={textLayerDiv}></div>
+        <div class="annotationLayer" bind:this={annotationLayerDiv}></div>
+      </div>
+    </div>
+  {:else}
+    <div class="canvas-wrap scroll" bind:this={scrollContainer}>
+      <div class="scroll-list">
+        {#each pageList as p, i (p.pageNum)}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="page-wrap"
+            data-page={p.pageNum}
+            style:width="{p.cssWidth}px"
+            style:height="{p.cssHeight}px"
+            onmousedown={handlePageMouseDown}
+            onmouseup={handlePageMouseUp}
+          >
+            <canvas bind:this={pageList[i].canvasEl}></canvas>
+            <div class="highlight-layer" bind:this={pageList[i].highlightLayerEl}>
+              {#each p.highlights as h (h.id)}
+                {#each h.rects as r, ri (ri)}
+                  <div
+                    class="highlight-rect"
+                    data-highlight-id={h.id}
+                    style="background: {h.color}; left: {r.x * scale}px; top: {r.y * scale}px; width: {r.w * scale}px; height: {r.h * scale}px;"
+                    title={h.text ?? ""}
+                  ></div>
+                {/each}
+              {/each}
+            </div>
+            <div class="textLayer" bind:this={pageList[i].textLayerEl}></div>
+            <div class="annotationLayer" bind:this={pageList[i].annotationLayerEl}></div>
+            {#if !p.rendered}
+              <div class="page-placeholder">Page {p.pageNum}</div>
+            {/if}
+          </div>
         {/each}
       </div>
-      <div class="textLayer" bind:this={textLayerDiv}></div>
-      <div class="annotationLayer" bind:this={annotationLayerDiv}></div>
     </div>
-  </div>
+  {/if}
 
   {#if removeMenu}
     <div
@@ -479,10 +800,17 @@
     </span>
     <button class="nav" onclick={() => goTo(currentPage + 1)} disabled={currentPage >= totalPages}>→</button>
     <div class="zoom-controls">
-      <button class="zoom" onclick={() => { scale = Math.max(0.25, scale - 0.1); renderPage(currentPage); }}>−</button>
+      <button class="zoom" onclick={() => changeZoom(-0.1)}>−</button>
       <span class="zoom-pct">{Math.round(scale * 100)}%</span>
-      <button class="zoom" onclick={() => { scale = Math.min(4, scale + 0.1); renderPage(currentPage); }}>+</button>
+      <button class="zoom" onclick={() => changeZoom(0.1)}>+</button>
     </div>
+    <button
+      class="mode-toggle"
+      onclick={() => setViewMode(viewMode === "paged" ? "scroll" : "paged")}
+      title={viewMode === "paged" ? "Switch to continuous scroll" : "Switch to paged view"}
+    >
+      {viewMode === "paged" ? "☰ Scroll" : "▤ Paged"}
+    </button>
   </nav>
 </div>
 
@@ -544,13 +872,25 @@
     flex: 1;
     overflow: auto;
     padding: 20px;
+  }
+  .canvas-wrap.paged {
     text-align: center;
+  }
+  .canvas-wrap.scroll {
+    padding: 16px 0;
+  }
+  .scroll-list {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
   }
   .page-wrap {
     position: relative;
     display: inline-block;
     box-shadow: 0 4px 24px rgba(0, 0, 0, 0.6);
     line-height: 0;
+    background: #fff;
   }
   canvas {
     display: block;
@@ -567,6 +907,17 @@
     opacity: 0.55;
     pointer-events: auto;
     cursor: pointer;
+  }
+  .page-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6c7086;
+    font-size: 14px;
+    pointer-events: none;
+    line-height: normal;
   }
   .remove-menu {
     position: fixed;
@@ -679,6 +1030,17 @@
   }
   .controls button.zoom:hover:not(:disabled) {
     background: #cba6f7;
+    color: #1e1e2e;
+  }
+  .controls button.mode-toggle {
+    background: rgba(166, 227, 161, 0.18);
+    color: #a6e3a1;
+    border-color: rgba(166, 227, 161, 0.35);
+    font-size: 13px;
+    padding: 6px 12px;
+  }
+  .controls button.mode-toggle:hover {
+    background: #a6e3a1;
     color: #1e1e2e;
   }
   .controls button:disabled {
