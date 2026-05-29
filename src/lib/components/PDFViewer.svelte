@@ -67,7 +67,7 @@
   let clickStartPos: { x: number; y: number } | null = null;
 
   // Scroll-mode state
-  const MAX_RENDERED = 10;
+  const MAX_RENDERED = 20;
   let viewMode = $state<ViewMode>(loadViewMode());
   let pageList = $state<PageEntry[]>([]);
   let scrollContainer: HTMLDivElement | null = $state(null);
@@ -450,6 +450,24 @@
     if (e.key === "Escape" && removeMenu) {
       removeMenu = null;
       return;
+    }
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        changeZoom(0.1);
+        return;
+      }
+      if (e.key === "-" || e.key === "_") {
+        e.preventDefault();
+        changeZoom(-0.1);
+        return;
+      }
+      if (e.key === "0") {
+        e.preventDefault();
+        const delta = 1 - scale;
+        if (delta !== 0) changeZoom(delta);
+        return;
+      }
     }
     if (e.key === "ArrowRight" || e.key === "ArrowDown") goTo(currentPage + 1);
     if (e.key === "ArrowLeft" || e.key === "ArrowUp") goTo(currentPage - 1);
