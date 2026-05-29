@@ -33,6 +33,9 @@
   let menu = $state<{ text: string; x: number; y: number } | null>(null);
   let dictPopup = $state<{ word: string; x: number; y: number } | null>(null);
   let appendRequest = $state<{ text: string; ts: number } | null>(null);
+  let gotoPageOpen = $state(false);
+  let gotoPageValue = $state("");
+  let gotoPageError = $state("");
   let pdfHighlighter = $state<((color: string) => Promise<void>) | null>(null);
   let viewerSearcher = $state<
     ((q: string) => Promise<{ page: number; snippet: string }[]>) | null
@@ -146,15 +149,40 @@
     if (viewerJumpTo) await viewerJumpTo(page);
   }
 
+  function openGotoPage() {
+    gotoPageValue = String(currentPage);
+    gotoPageError = "";
+    gotoPageOpen = true;
+  }
+
+  async function submitGotoPage(e: Event) {
+    e.preventDefault();
+    const num = parseInt(gotoPageValue, 10);
+    if (isNaN(num) || num < 1 || (totalPages > 0 && num > totalPages)) {
+      gotoPageError = totalPages > 0
+        ? `Enter a number between 1 and ${totalPages}`
+        : "Enter a valid page number";
+      return;
+    }
+    gotoPageOpen = false;
+    await handleJump(num);
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       activeTab = "search";
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "g") {
+      e.preventDefault();
+      openGotoPage();
+      return;
+    }
     if (e.key === "Escape") {
       if (menu) closeMenu();
       else if (dictPopup) dictPopup = null;
+      else if (gotoPageOpen) gotoPageOpen = false;
       else if (activeTab !== null) activeTab = null;
     }
   }
@@ -274,6 +302,32 @@
     y={dictPopup.y}
     onClose={() => (dictPopup = null)}
   />
+{/if}
+
+{#if gotoPageOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="goto-overlay" onclick={() => (gotoPageOpen = false)}>
+    <form class="goto-modal" onsubmit={submitGotoPage} onclick={(e) => e.stopPropagation()}>
+      <label for="goto-input">Go to page</label>
+      <input
+        id="goto-input"
+        type="number"
+        min="1"
+        max={totalPages || undefined}
+        bind:value={gotoPageValue}
+        autofocus
+        placeholder={totalPages ? `1 – ${totalPages}` : "Page number"}
+      />
+      {#if gotoPageError}
+        <div class="goto-error">{gotoPageError}</div>
+      {/if}
+      <div class="goto-actions">
+        <button type="button" class="goto-cancel" onclick={() => (gotoPageOpen = false)}>Cancel</button>
+        <button type="submit" class="goto-go">Go</button>
+      </div>
+    </form>
+  </div>
 {/if}
 
 <style>
@@ -396,4 +450,71 @@
     font-size: 12px;
     white-space: pre-wrap;
   }
+  .goto-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1200;
+  }
+  .goto-modal {
+    background: #1e1e2e;
+    border: 1px solid #45475a;
+    border-radius: 10px;
+    padding: 18px 20px;
+    width: 280px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  }
+  .goto-modal label {
+    font-size: 13px;
+    color: #a6adc8;
+    font-weight: 600;
+  }
+  .goto-modal input {
+    background: #313244;
+    border: 1px solid #45475a;
+    color: #cdd6f4;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+    outline: none;
+    font-family: inherit;
+  }
+  .goto-modal input:focus {
+    border-color: #89b4fa;
+  }
+  .goto-error {
+    color: #f38ba8;
+    font-size: 12px;
+  }
+  .goto-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .goto-cancel, .goto-go {
+    border: none;
+    padding: 7px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+  }
+  .goto-cancel {
+    background: #313244;
+    color: #cdd6f4;
+  }
+  .goto-cancel:hover { background: #45475a; }
+  .goto-go {
+    background: #89b4fa;
+    color: #1e1e2e;
+  }
+  .goto-go:hover { background: #74c7ec; }
 </style>
