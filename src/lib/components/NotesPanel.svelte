@@ -3,10 +3,11 @@
   import { invoke } from "@tauri-apps/api/core";
   import type { Book } from "../stores/books";
 
-  let { book, currentPage, appendRequest }: {
+  let { book, currentPage, appendRequest, onAnnotationChange }: {
     book: Book;
     currentPage: number;
     appendRequest?: { text: string; ts: number } | null;
+    onAnnotationChange?: () => void;
   } = $props();
 
   let lastHandledTs = 0;
@@ -218,6 +219,7 @@
         text: p.text.trim() || null,
         strokes: p.strokes.length > 0 ? JSON.stringify(p.strokes) : null,
       });
+      onAnnotationChange?.();
     } catch (e) {
       console.error("save_note failed:", e);
     }

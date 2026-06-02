@@ -10,6 +10,7 @@
     book,
     onTextSelect,
     onPageChange,
+    onAnnotationChange,
     highlighter = $bindable(null),
     searcher = $bindable(null),
     jumpTo = $bindable(null),
@@ -19,6 +20,7 @@
     book: Book;
     onTextSelect: (text: string, rect?: DOMRect) => void;
     onPageChange?: (page: number, totalPages: number) => void;
+    onAnnotationChange?: () => void;
     highlighter?: ((color: string) => Promise<void>) | null;
     searcher?:
       | ((query: string) => Promise<{ page: number; snippet: string }[]>)
@@ -518,6 +520,7 @@
           }
         }
       }
+      onAnnotationChange?.();
     } catch (e) {
       console.error("delete_highlight:", e);
     }
@@ -623,6 +626,7 @@
       } else {
         await loadHighlightsForPage(pageNum);
       }
+      onAnnotationChange?.();
     } catch (e) {
       console.error("add_highlight:", e);
     }

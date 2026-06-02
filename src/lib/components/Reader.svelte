@@ -9,6 +9,7 @@
   import SearchPanel from "./SearchPanel.svelte";
   import OutlinePanel from "./OutlinePanel.svelte";
   import DictionaryPopup from "./DictionaryPopup.svelte";
+  import AnnotationsPanel from "./AnnotationsPanel.svelte";
   import type { Book } from "../stores/books";
 
   let { book, onBack }: {
@@ -16,7 +17,7 @@
     onBack: () => void;
   } = $props();
 
-  type Tab = "chat" | "bookmarks" | "notes" | "search" | "contents";
+  type Tab = "chat" | "bookmarks" | "notes" | "search" | "contents" | "annotations";
 
   interface OutlineItem {
     title: string;
@@ -29,6 +30,11 @@
   let currentPage = $state(book.current_page || 1);
   let totalPages = $state(book.total_pages || 0);
   let viewerError = $state("");
+  let annotationsRefreshKey = $state(0);
+
+  function bumpAnnotations() {
+    annotationsRefreshKey++;
+  }
 
   let menu = $state<{ text: string; x: number; y: number } | null>(null);
   let dictPopup = $state<{ word: string; x: number; y: number } | null>(null);
@@ -179,6 +185,11 @@
       openGotoPage();
       return;
     }
+    if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "a") {
+      e.preventDefault();
+      toggleTab("annotations");
+      return;
+    }
     if (e.key === "Escape") {
       if (menu) closeMenu();
       else if (dictPopup) dictPopup = null;
@@ -223,6 +234,11 @@
         class:active={activeTab === "bookmarks"}
         onclick={() => toggleTab("bookmarks")}
       >Bookmarks</button>
+      <button
+        class:active={activeTab === "annotations"}
+        onclick={() => toggleTab("annotations")}
+        title="Annotations (Ctrl+Shift+A)"
+      >🏷 Annotations</button>
     </div>
   </header>
 
@@ -238,6 +254,7 @@
           {book}
           onTextSelect={handleTextSelect}
           onPageChange={handlePageChange}
+          onAnnotationChange={bumpAnnotations}
           bind:highlighter={pdfHighlighter}
           bind:searcher={viewerSearcher}
           bind:jumpTo={viewerJumpTo}
@@ -269,11 +286,18 @@
         {#if activeTab === "chat"}
           <ChatPanel {book} {selectedText} />
         {:else if activeTab === "notes"}
-          <NotesPanel {book} {currentPage} {appendRequest} />
+          <NotesPanel {book} {currentPage} {appendRequest} onAnnotationChange={bumpAnnotations} />
         {:else if activeTab === "search"}
           <SearchPanel searcher={viewerSearcher} onJump={handleJump} />
         {:else if activeTab === "contents"}
           <OutlinePanel outline={viewerOutline} navigateToDest={viewerNavigateToDest} />
+        {:else if activeTab === "annotations"}
+          <AnnotationsPanel
+            bookId={book.id}
+            bookTitle={book.title}
+            onJump={handleJump}
+            refreshKey={annotationsRefreshKey}
+          />
         {:else}
           <BookmarkList {book} {currentPage} onJump={handleJump} />
         {/if}

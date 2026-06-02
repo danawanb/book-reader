@@ -71,6 +71,38 @@ pub fn save_note(
 }
 
 #[tauri::command]
+pub fn get_notes_by_book(book_id: i64, state: State<DbState>) -> Result<Vec<Note>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, book_id, page, text, strokes, updated_at
+             FROM notes WHERE book_id = ?1
+             AND (
+               (text IS NOT NULL AND trim(text) != '')
+               OR (strokes IS NOT NULL AND strokes != '' AND strokes != '[]')
+             )
+             ORDER BY page ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let items = stmt
+        .query_map(params![book_id], |row| {
+            Ok(Note {
+                id: row.get(0)?,
+                book_id: row.get(1)?,
+                page: row.get(2)?,
+                text: row.get(3)?,
+                strokes: row.get(4)?,
+                updated_at: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(items)
+}
+
+#[tauri::command]
 pub fn get_note_pages(book_id: i64, state: State<DbState>) -> Result<Vec<i64>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn

@@ -33,8 +33,10 @@ pub fn run() {
             commands::notes::get_note,
             commands::notes::save_note,
             commands::notes::get_note_pages,
+            commands::notes::get_notes_by_book,
             commands::highlights::add_highlight,
             commands::highlights::get_highlights,
+            commands::highlights::get_highlights_by_book,
             commands::highlights::delete_highlight,
         ])
         .run(tauri::generate_context!())

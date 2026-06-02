@@ -83,6 +83,37 @@ pub fn get_highlights(
 }
 
 #[tauri::command]
+pub fn get_highlights_by_book(
+    book_id: i64,
+    state: State<DbState>,
+) -> Result<Vec<Highlight>, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, book_id, page, text, color, rects, created_at
+             FROM highlights WHERE book_id = ?1 ORDER BY page ASC, created_at ASC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let items = stmt
+        .query_map(params![book_id], |row| {
+            Ok(Highlight {
+                id: row.get(0)?,
+                book_id: row.get(1)?,
+                page: row.get(2)?,
+                text: row.get(3)?,
+                color: row.get(4)?,
+                rects: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(items)
+}
+
+#[tauri::command]
 pub fn delete_highlight(id: i64, state: State<DbState>) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM highlights WHERE id = ?1", params![id])
