@@ -5,6 +5,8 @@ pub fn init(db_path: &PathBuf) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
     conn.execute_batch("PRAGMA foreign_keys = ON;")?;
     migrate(&conn)?;
+    // Idempotent: errors if column already exists, which we ignore.
+    let _ = conn.execute("ALTER TABLE books ADD COLUMN last_opened_at TEXT", []);
     Ok(conn)
 }
 
@@ -19,7 +21,8 @@ fn migrate(conn: &Connection) -> Result<()> {
             cover_path  TEXT,
             total_pages INTEGER,
             current_page INTEGER DEFAULT 1,
-            created_at  TEXT DEFAULT (datetime('now'))
+            created_at  TEXT DEFAULT (datetime('now')),
+            last_opened_at TEXT
         );
         CREATE TABLE IF NOT EXISTS bookmarks (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,

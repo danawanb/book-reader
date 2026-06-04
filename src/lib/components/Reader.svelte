@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import PDFViewer from "./PDFViewer.svelte";
   import EPUBViewer from "./EPUBViewer.svelte";
@@ -201,6 +202,10 @@
   $effect(() => {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+  });
+
+  onMount(() => {
+    invoke("touch_book", { bookId: book.id }).catch(() => {});
   });
 </script>
 
