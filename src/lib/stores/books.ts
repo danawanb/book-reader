@@ -12,6 +12,7 @@ export interface Book {
   current_page: number;
   created_at: string;
   last_opened_at: string | null;
+  last_opened_seq: number;
 }
 
 export const books = writable<Book[]>([]);

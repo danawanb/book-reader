@@ -7,6 +7,10 @@ pub fn init(db_path: &PathBuf) -> Result<Connection> {
     migrate(&conn)?;
     // Idempotent: errors if column already exists, which we ignore.
     let _ = conn.execute("ALTER TABLE books ADD COLUMN last_opened_at TEXT", []);
+    let _ = conn.execute(
+        "ALTER TABLE books ADD COLUMN last_opened_seq INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
     Ok(conn)
 }
 
@@ -22,7 +26,8 @@ fn migrate(conn: &Connection) -> Result<()> {
             total_pages INTEGER,
             current_page INTEGER DEFAULT 1,
             created_at  TEXT DEFAULT (datetime('now')),
-            last_opened_at TEXT
+            last_opened_at TEXT,
+            last_opened_seq INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS bookmarks (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,

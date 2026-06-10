@@ -41,8 +41,8 @@
   );
   const recentBooks = $derived(
     [...$books]
-      .filter((b) => b.last_opened_at)
-      .sort((a, b) => (b.last_opened_at ?? "").localeCompare(a.last_opened_at ?? ""))
+      .filter((b) => b.last_opened_seq > 0)
+      .sort((a, b) => b.last_opened_seq - a.last_opened_seq)
       .slice(0, 5)
   );
 
