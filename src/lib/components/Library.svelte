@@ -39,13 +39,6 @@
   const totalPagesRead = $derived(
     $books.reduce((sum, b) => sum + (b.current_page || 0), 0)
   );
-  const recentBooks = $derived(
-    [...$books]
-      .filter((b) => b.last_opened_seq > 0)
-      .sort((a, b) => b.last_opened_seq - a.last_opened_seq)
-      .slice(0, 5)
-  );
-
   const filteredBooks = $derived.by(() => {
     const q = searchQuery.trim().toLowerCase();
     let result = q
@@ -163,19 +156,6 @@
       <span class="dot">·</span>
       <span>📖 <strong>{totalPagesRead.toLocaleString()}</strong> pages read</span>
     </div>
-  {/if}
-
-  {#if recentBooks.length > 0 && !searchQuery}
-    <section class="recent">
-      <h2 class="section-title">Recently opened</h2>
-      <div class="recent-strip">
-        {#each recentBooks as book (book.id)}
-          <div class="recent-item">
-            <BookCard {book} onOpen={onOpen} />
-          </div>
-        {/each}
-      </div>
-    </section>
   {/if}
 
   {#if $books.length === 0}
@@ -385,36 +365,5 @@
   }
   .stats-bar .dot {
     color: #45475a;
-  }
-  .recent {
-    padding: 16px 28px 8px;
-    flex-shrink: 0;
-  }
-  .section-title {
-    margin: 0 0 10px;
-    font-size: 12px;
-    font-weight: 600;
-    color: #6c7086;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .recent-strip {
-    display: flex;
-    gap: 16px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 6px;
-    scrollbar-width: thin;
-    scrollbar-color: #45475a transparent;
-  }
-  .recent-strip::-webkit-scrollbar {
-    height: 6px;
-  }
-  .recent-strip::-webkit-scrollbar-thumb {
-    background: #45475a;
-    border-radius: 3px;
-  }
-  .recent-item {
-    flex: 0 0 120px;
   }
 </style>

@@ -14,8 +14,6 @@ pub struct Book {
     pub total_pages: Option<i64>,
     pub current_page: i64,
     pub created_at: String,
-    pub last_opened_at: Option<String>,
-    pub last_opened_seq: i64,
 }
 
 pub struct DbState(pub Mutex<rusqlite::Connection>);
@@ -25,7 +23,7 @@ pub fn get_all_books(state: State<DbState>) -> Result<Vec<Book>, String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare(
-            "SELECT id, title, author, file_path, file_type, cover_path, total_pages, current_page, created_at, last_opened_at, last_opened_seq
+            "SELECT id, title, author, file_path, file_type, cover_path, total_pages, current_page, created_at
              FROM books ORDER BY created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -42,8 +40,6 @@ pub fn get_all_books(state: State<DbState>) -> Result<Vec<Book>, String> {
                 total_pages: row.get(6)?,
                 current_page: row.get(7)?,
                 created_at: row.get(8)?,
-                last_opened_at: row.get(9)?,
-                last_opened_seq: row.get(10)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -123,7 +119,7 @@ pub fn add_book(
     let id = conn.last_insert_rowid();
     let book = conn
         .query_row(
-            "SELECT id, title, author, file_path, file_type, cover_path, total_pages, current_page, created_at, last_opened_at, last_opened_seq
+            "SELECT id, title, author, file_path, file_type, cover_path, total_pages, current_page, created_at
              FROM books WHERE id = ?1",
             params![id],
             |row| Ok(Book {
@@ -136,8 +132,6 @@ pub fn add_book(
                 total_pages: row.get(6)?,
                 current_page: row.get(7)?,
                 created_at: row.get(8)?,
-                last_opened_at: row.get(9)?,
-                last_opened_seq: row.get(10)?,
             }),
         )
         .map_err(|e| e.to_string())?;
@@ -177,21 +171,8 @@ pub fn update_progress(
 ) -> Result<(), String> {
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     conn.execute(
-        "UPDATE books SET current_page = ?1, total_pages = ?2, last_opened_at = datetime('now'),
-         last_opened_seq = (SELECT COALESCE(MAX(last_opened_seq), 0) + 1 FROM books) WHERE id = ?3",
+        "UPDATE books SET current_page = ?1, total_pages = ?2 WHERE id = ?3",
         params![page, total_pages, book_id],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
-#[tauri::command]
-pub fn touch_book(book_id: i64, state: State<DbState>) -> Result<(), String> {
-    let conn = state.0.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "UPDATE books SET last_opened_at = datetime('now'),
-         last_opened_seq = (SELECT COALESCE(MAX(last_opened_seq), 0) + 1 FROM books) WHERE id = ?1",
-        params![book_id],
     )
     .map_err(|e| e.to_string())?;
     Ok(())

@@ -25,7 +25,6 @@ pub fn run() {
             commands::books::add_book,
             commands::books::delete_book,
             commands::books::update_progress,
-            commands::books::touch_book,
             commands::books::save_pdf_cover,
             commands::bookmarks::get_bookmarks,
             commands::bookmarks::add_bookmark,
