@@ -45,6 +45,7 @@
   }
 
   type ViewMode = "paged" | "scroll";
+  type PdfRenderTask = { promise: Promise<void>; cancel: () => void };
 
   interface PageEntry {
     pageNum: number;
@@ -57,6 +58,7 @@
     annotationLayerEl: HTMLDivElement | null;
     highlightLayerEl: HTMLDivElement | null;
     highlights: Highlight[];
+    renderTask: PdfRenderTask | null;
   }
 
   // Paged-mode state (existing)
@@ -75,6 +77,7 @@
   let scrollContainer: HTMLDivElement | null = $state(null);
   let scrollObserver: IntersectionObserver | null = null;
   let renderOrder: number[] = []; // LRU: oldest at index 0, newest at end
+  let scrollFrameId: number | null = null;
 
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -88,7 +91,7 @@
   let pdfDoc: pdfjsLib.PDFDocumentProxy | null = null;
   let currentPage = $state(book.current_page || 1);
   let totalPages = $state(0);
-  let scale = $state(1.5);
+  let scale = $state(1.2);
   let rendering = $state(false);
   let coverSaved = false;
   let saveProgress: ReturnType<typeof setTimeout> | null = null;
@@ -179,6 +182,7 @@
       textLayer: HTMLDivElement;
       annotationLayer: HTMLDivElement;
     },
+    onRenderTask?: (task: PdfRenderTask) => void,
   ): Promise<{ cssWidth: number; cssHeight: number }> {
     if (!pdfDoc) return { cssWidth: 0, cssHeight: 0 };
     const page = await pdfDoc.getPage(num);
@@ -205,11 +209,13 @@
     target.annotationLayer.style.height = cssH;
     target.annotationLayer.innerHTML = "";
 
-    await page.render({
+    const task = page.render({
       canvasContext: ctx,
       viewport: renderViewport,
       canvas: target.canvas,
-    }).promise;
+    }) as unknown as PdfRenderTask;
+    onRenderTask?.(task);
+    await task.promise;
 
     const textContent = await page.getTextContent();
     const textLayer = new pdfjsLib.TextLayer({
@@ -257,20 +263,29 @@
     if (!entry.canvasEl || !entry.textLayerEl || !entry.annotationLayerEl) return;
     entry.rendering = true;
     try {
-      const dims = await renderPageInto(num, {
-        canvas: entry.canvasEl,
-        textLayer: entry.textLayerEl,
-        annotationLayer: entry.annotationLayerEl,
-      });
+      const dims = await renderPageInto(
+        num,
+        {
+          canvas: entry.canvasEl,
+          textLayer: entry.textLayerEl,
+          annotationLayer: entry.annotationLayerEl,
+        },
+        (task) => {
+          entry.renderTask = task;
+        },
+      );
       entry.cssWidth = dims.cssWidth;
       entry.cssHeight = dims.cssHeight;
       entry.rendered = true;
       trackRender(num);
       await loadHighlightsForPage(num);
     } catch (e) {
-      console.error(`renderScrollPage(${num}):`, e);
+      if ((e as Error)?.name !== "RenderingCancelledException") {
+        console.error(`renderScrollPage(${num}):`, e);
+      }
     } finally {
       entry.rendering = false;
+      entry.renderTask = null;
     }
   }
 
@@ -286,7 +301,13 @@
 
   function evictPage(num: number) {
     const entry = pageList[num - 1];
-    if (!entry || !entry.rendered) return;
+    if (!entry) return;
+    if (entry.renderTask) {
+      try { entry.renderTask.cancel(); } catch {}
+      entry.renderTask = null;
+      entry.rendering = false;
+    }
+    if (!entry.rendered) return;
     if (entry.canvasEl) {
       // width=0 frees the pixel buffer; CSS style.width tetap, layout aman
       entry.canvasEl.width = 0;
@@ -375,16 +396,27 @@
       annotationLayerEl: null,
       highlightLayerEl: null,
       highlights: [],
+      renderTask: null,
     }));
 
     await tick();
     requestAnimationFrame(() => {
       setupScrollObserver();
       scrollToPage(currentPage, false);
+      if (scrollContainer) {
+        scrollContainer.addEventListener("scroll", onScrollContainer, { passive: true });
+      }
     });
   }
 
   function teardownScrollMode() {
+    if (scrollContainer) {
+      scrollContainer.removeEventListener("scroll", onScrollContainer);
+    }
+    if (scrollFrameId !== null) {
+      cancelAnimationFrame(scrollFrameId);
+      scrollFrameId = null;
+    }
     if (scrollObserver) {
       scrollObserver.disconnect();
       scrollObserver = null;
@@ -393,13 +425,53 @@
     renderOrder = [];
   }
 
+  function onScrollContainer() {
+    if (scrollFrameId !== null) return;
+    scrollFrameId = requestAnimationFrame(() => {
+      scrollFrameId = null;
+      updateActivePage();
+    });
+  }
+
+  function updateActivePage() {
+    if (!scrollContainer || pageList.length === 0) return;
+    const containerRect = scrollContainer.getBoundingClientRect();
+    const midY = containerRect.top + containerRect.height / 2;
+
+    const checkPage = (num: number): boolean => {
+      if (num < 1 || num > pageList.length) return false;
+      const entry = pageList[num - 1];
+      const el = entry.canvasEl?.parentElement;
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.top <= midY && r.bottom >= midY) {
+        if (currentPage !== num) {
+          currentPage = num;
+          onPageChange?.(num, totalPages);
+          debounceSaveProgress(num);
+        }
+        return true;
+      }
+      return false;
+    };
+
+    // Scroll is usually continuous → currentPage is close. Walk outward.
+    if (checkPage(currentPage)) return;
+    for (let d = 1; d <= 10; d++) {
+      if (checkPage(currentPage + d)) return;
+      if (checkPage(currentPage - d)) return;
+    }
+    // Fallback for big jumps
+    for (const entry of pageList) {
+      if (checkPage(entry.pageNum)) return;
+    }
+  }
+
   function setupScrollObserver() {
     if (!scrollContainer) return;
     if (scrollObserver) scrollObserver.disconnect();
     scrollObserver = new IntersectionObserver(
       (entries) => {
-        let bestNum = 0;
-        let bestRatio = 0;
         for (const e of entries) {
           const num = parseInt((e.target as HTMLElement).dataset.page ?? "0");
           if (!num) continue;
@@ -408,22 +480,16 @@
           if (e.isIntersecting) {
             if (!entry.rendered && !entry.rendering) {
               renderScrollPage(num);
-            } else if (entry.rendered) {
-              trackRender(num);
             }
+          } else if (entry.rendering && entry.renderTask) {
+            // Left viewport mid-render → cancel to free CPU for visible pages
+            try { entry.renderTask.cancel(); } catch {}
+            entry.renderTask = null;
+            entry.rendering = false;
           }
-          if (e.intersectionRatio > bestRatio) {
-            bestRatio = e.intersectionRatio;
-            bestNum = num;
-          }
-        }
-        if (bestNum > 0 && bestRatio > 0.5 && currentPage !== bestNum) {
-          currentPage = bestNum;
-          onPageChange?.(bestNum, totalPages);
-          debounceSaveProgress(bestNum);
         }
       },
-      { root: scrollContainer, rootMargin: "800px 0px", threshold: [0, 0.25, 0.5, 0.75, 1] },
+      { root: scrollContainer, rootMargin: "400px 0px", threshold: 0 },
     );
     const wraps = scrollContainer.querySelectorAll<HTMLElement>("[data-page]");
     wraps.forEach((el) => scrollObserver!.observe(el));
